@@ -1,7 +1,3 @@
--- ==========================================
--- F1 Fantasy Game - 2026 Persistent Edition
--- With Manual Export & Constructor Fix
--- ==========================================
 local love = require("love")
 local fantasyData = { teams = {} }
 local state = "menu"
