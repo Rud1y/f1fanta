@@ -1,8 +1,4 @@
 local love = require("love")
--- ==========================================
--- F1 Fantasy Game - 2026 Persistent Edition
--- Added: Teammate DNS Rule & Global Constructor Session Logging
--- ==========================================
 
 local fantasyData = { teams = {}, results = {} }
 local state = "menu"
@@ -111,9 +107,6 @@ local resultsLayout = {
     { label = "Bulk Input (Paste multi-session text here to Auto-Fill!):", key = "bulk_input",  x = 30,  y = 400, w = 740, h = 30 }
 }
 
--- ==========================================
--- FILE HANDLING & UTILS
--- ==========================================
 local function tableToString(t)
     local s = "{"
     for k, v in pairs(t) do
@@ -214,7 +207,6 @@ local function exportToTextFile()
                         table.insert(lines,
                             string.format("  === SESSION: %s (Earned: %g pts) ===", string.upper(s.name), cd[s.key] or 0))
 
-                        -- 1. Display Drivers
                         if sDetails.drivers and next(sDetails.drivers) then
                             table.insert(lines, "    [DRIVERS]")
                             for dn, logs in pairs(sDetails.drivers) do
@@ -234,7 +226,6 @@ local function exportToTextFile()
                             end
                         end
 
-                        -- 2. Display Constructor
                         if sDetails.constructor and next(sDetails.constructor) then
                             local constTotal = 0
                             for dn, logs in pairs(sDetails.constructor) do
@@ -255,7 +246,6 @@ local function exportToTextFile()
                             end
                         end
                         
-                        -- 3. Display Predictions
                         if sDetails.predictions and next(sDetails.predictions) then
                             table.insert(lines, "    [PREDICTIONS]")
                             for _, e in ipairs(sDetails.predictions) do
@@ -281,9 +271,6 @@ local function formatDriver(str)
     return string.upper(str:match("^%s*(.-)%s*$"))
 end
 
--- ==========================================
--- LÖVE CORE
--- ==========================================
 function love.load()
     love.filesystem.setIdentity("F1FantasyApp")
     loadDatabase()
@@ -392,9 +379,6 @@ function love.draw()
     end
 end
 
--- ==========================================
--- SMART BULK PARSERS
--- ==========================================
 local function parseBulkTeams(text)
     local lines = {}
     for line in text:gmatch("[^\r\n]+") do table.insert(lines, line) end
@@ -459,9 +443,6 @@ local function populateFromBulk(text)
     end
 end
 
--- ==========================================
--- SESSION PROCESSOR (With Breakdown Logger)
--- ==========================================
 local function processSingleSession(session, sKey, sStr, circ, dnfMap, flDr, leaderDr)
     local standings = {}
     for item in string.gmatch(sStr, "([^,]+)") do
@@ -532,7 +513,6 @@ local function processSingleSession(session, sKey, sStr, circ, dnfMap, flDr, lea
         positions[obj.name] = pos
     end
 
-    -- H2H TEAMMATE BATTLES (Both must finish. No points if teammate DNF'd, DNS'd, or DSQ'd)
     if session == "Main" then
         for _, obj in ipairs(standings) do
             local dn = obj.name
@@ -550,7 +530,7 @@ local function processSingleSession(session, sKey, sStr, circ, dnfMap, flDr, lea
                     local dnFailed = hasDriverFailedInSession(dn, "Main", dnfMap)
                     local teammateFailed = hasDriverFailedInSession(teammate, "Main", dnfMap)
 
-                    if not dnFailed and not teammateFailed then -- BOTH MUST FINISH
+                    if not dnFailed and not teammateFailed then
                         local posA = positions[dn]
                         local posB = positions[teammate]
                         if posA and posB then
@@ -605,11 +585,9 @@ local function processSingleSession(session, sKey, sStr, circ, dnfMap, flDr, lea
         end
 
         if isDNS then
-            -- Driver DNS'd! Force 0 points to override any position points
             driverPoints[obj.name] = 0
             constPoints[obj.name] = 0
         else
-            -- Normal processing
             local pts = (pointsMap[session] and pointsMap[session][pos]) or 0
             if pts > 0 then
                 addLog(obj.name, string.format("%s place", getOrdinal(pos)), pts)
@@ -620,7 +598,6 @@ local function processSingleSession(session, sKey, sStr, circ, dnfMap, flDr, lea
             if session == "Main" or session == "Sprint" then
                 local gainPts = obj.posGained * 0.5
                 if gainPts ~= 0 then
-                    -- Check if this driver DNF'd in this specific session
                     local isDNF = false
                     if dnfMap[obj.name] then
                         local status = dnfMap[obj.name]
@@ -632,7 +609,6 @@ local function processSingleSession(session, sKey, sStr, circ, dnfMap, flDr, lea
                         if applyDNF and not status:find("DNS") then isDNF = true end
                     end
 
-                    -- Bypasses the penalty if the driver DNF'd and lost positions, AND prevents gaining points if DNF'd
                     if not (isDNF and gainPts < 0) and not (isDNF and gainPts > 0) then
                         local label = gainPts > 0 and "Position gained" or "Position lost"
                         addLog(obj.name, label, gainPts)
@@ -690,7 +666,6 @@ local function processSingleSession(session, sKey, sStr, circ, dnfMap, flDr, lea
         end
     end
 
-    -- Process DNFs & DNSs (Applies standard DNF/DNS/DSQ retirement/non-start penalties)
     for dn, dtype in pairs(dnfMap) do
         local applyDNF = true
         if dtype:find("QUALI") and session ~= "Quali" then applyDNF = false end
@@ -743,7 +718,6 @@ local function processSingleSession(session, sKey, sStr, circ, dnfMap, flDr, lea
         if c then addConstLog(c, flDr, "Fastest lap", flPts) end
     end
 
-    -- Distribute Points to User Teams
     for _, team in pairs(fantasyData.teams) do
         if not team.circuitData[circ] then team.circuitData[circ] = { p1 = 0, p2 = 0, p3 = 0, shootout = 0, sprint = 0, quali = 0, main = 0, isSprint = false } end
         if sKey == "sprint" or sKey == "shootout" then team.circuitData[circ].isSprint = true end
@@ -763,11 +737,9 @@ local function processSingleSession(session, sKey, sStr, circ, dnfMap, flDr, lea
 
         local r = team.circuitData[circ].roster
 
-        -- Build details breakdown map
         team.circuitData[circ].details = team.circuitData[circ].details or {}
         local details = { drivers = {}, constructor = {}, predictions = {} }
 
-        -- 1. Grab Driver Logs
         for _, dn in ipairs({ r.d1, r.d2, r.d3, r.d4 }) do
             if dn ~= "" and driverLogs[dn] then
                 details.drivers[dn] = {}
@@ -779,12 +751,10 @@ local function processSingleSession(session, sKey, sStr, circ, dnfMap, flDr, lea
             end
         end
 
-        -- 2. Grab Constructor Logs (Ensured for all sessions + Case Insensitive Fix)
         if r.constructor ~= "" then
             local cName = r.constructor
             details.constructor = {}
 
-            -- Find the actual capitalized key in constLogs
             local actualKey = nil
             for k, _ in pairs(constLogs) do
                 if string.lower(k) == string.lower(cName) then
@@ -807,7 +777,6 @@ local function processSingleSession(session, sKey, sStr, circ, dnfMap, flDr, lea
             end
         end
         
-        -- 3. Grab Predictions Logs
         if session == "Main" then
             if standings[1] and r.preds.first == standings[1].name then table.insert(details.predictions,
                     { label = "Winner prediction", final = 5 }) end
@@ -826,7 +795,6 @@ local function processSingleSession(session, sKey, sStr, circ, dnfMap, flDr, lea
 
         team.circuitData[circ].details[sKey] = details
 
-        -- Calculate final points
         local earned = 0
         local function addDr(dn)
             if not dn or dn == "" then return end
@@ -845,7 +813,6 @@ local function processSingleSession(session, sKey, sStr, circ, dnfMap, flDr, lea
             end
         end
 
-        -- Accumulate prediction points to the session
         for _, e in ipairs(details.predictions) do earned = earned + e.final end
 
         local previousEarned = team.circuitData[circ][sKey] or 0
@@ -893,9 +860,6 @@ local function processResults()
     return true, "Points calculated!"
 end
 
--- ==========================================
--- INPUTS
--- ==========================================
 function love.mousepressed(x, y, button)
     if button ~= 1 then return end
     activeInput = nil
